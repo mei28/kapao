@@ -101,7 +101,7 @@ if __name__ == '__main__':
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     gif_frames = []
     #video_name = 'flash_mob_inference_{}'.format(osp.splitext(args.weights)[0])
-    video_name = output
+    video_name = 'output'
 
     if not args.display:
         writer = cv2.VideoWriter(video_name + '.mp4',
