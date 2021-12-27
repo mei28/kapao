@@ -1,0 +1,10 @@
+version: '3'
+services:
+  kapao:
+    build: docker/Dockerfile
+    volumes:
+      - ./:/working
+    working_dir: /working
+    ports:
+      - "8888:8888"
+    command: jupyter lab --ip=0.0.0.0 --allow-root --NotebookApp.toke='' --port=8888

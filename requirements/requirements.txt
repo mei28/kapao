@@ -34,3 +34,6 @@ thop  # FLOPs computation
 
 # inference demos
 pytube
+
+# add
+jupyterlab
