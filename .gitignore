@@ -20,6 +20,7 @@
 *.data
 *.json
 *.cfg
+*.m2ts
 !cfg/yolov3*.cfg
 
 storage.googleapis.com
