@@ -37,3 +37,4 @@ pytube
 
 # add
 jupyterlab
+imageio

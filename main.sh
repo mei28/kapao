@@ -5,9 +5,9 @@
 # ! sh data/scripts/download_models.sh
 
 VIDEO_PATH="./movie/mp4/"
-VIDEO_NAME='p002.mp4'
+VIDEO_NAME="twitter_pingpong.mp4"
 
-python test.py --name $VIDEO_PATH$VIDEO_NAME --weights kapao_s_coco.pt --start 0 --end 1200
+python test.py --name $VIDEO_PATH$VIDEO_NAME --weights kapao_s_coco.pt --start 0 --end 123
 
 mv output.mp4 "./movie/pose-$VIDEO_NAME"
 # xdg-open output.mp4
