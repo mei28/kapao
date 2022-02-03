@@ -38,3 +38,4 @@ pytube
 # add
 jupyterlab
 imageio
+label-studio
