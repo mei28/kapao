@@ -39,3 +39,4 @@ pytube
 jupyterlab
 imageio
 label-studio
+ipywidgets
