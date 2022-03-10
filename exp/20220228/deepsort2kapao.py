@@ -1,7 +1,6 @@
-# kapaoからbboxを取得する
+# deepsortで得られた結果をkapaoと一緒にみてみる
 
-
-import sys
+import sys 
 from pathlib import Path
 
 FILE = Path().resolve()
@@ -10,15 +9,16 @@ import os
 
 from pdb import set_trace as pst
 import argparse
+from pytube import YouTube
 import os.path as osp
 from utils.torch_utils import select_device, time_sync
 from utils.general import check_img_size
 from utils.datasets import LoadImages
-from models.experimental import attempt_load 
+from models.experimental import attempt_load
 import torch
+import pickle
 import cv2
 import numpy as np
-import pickle
 import pandas as pd
 import yaml
 from tqdm import tqdm
@@ -85,30 +85,11 @@ def get_args():
 
     parser.add_argument("--video_name", type=str)
     parser.add_argument("--output_dir", type=str)
+    parser.add_argument("--poses", type=str)
 
     args = parser.parse_args()
     return args
 
-def convert_tldr2ltwh(bboxes,scores):
-    """convert topleft downright to left top width hight
-    Args:
-        bboxes (list): shape = [frames,nums,[x1 y1 x2 y2]]
-    
-    Returns:
-        list: [<frame>, <id>, <bb_left>, <bb_top>, <bb_width>, <bb_height>, <conf>, <x>, <y>, <z>]
-    """
-    ret = []
-    for i, (bbox,score) in enumerate(zip(bboxes,scores),start=1):
-        for (x1, y1, x2, y2),(conf) in zip(bbox,score):
-            bb_left = x1
-            bb_top = y1
-            bb_width = abs(x2-x1)
-            bb_height = abs(y1-y2)
-            
-            _box = [i,-1,bb_left,bb_top,bb_width,bb_height,conf,-1,-1,-1]
-        
-            ret.append(_box)
-    return ret
 
 def convert_tldr2ltwh(bboxes, scores) -> list:
     """convert topleft downright to left top width hight
@@ -194,6 +175,18 @@ def get_sorted_bbox()->pd.DataFrame:
     """get sorted_mot(from deepsort)"""
     return pd.read_csv(args.sorted_mot,header=None)
 
+def load_poses()->list:
+    """load poses list created from kapao"""
+    with open(args.poses,'rb') as f:
+        ret = pickle.load(f)
+    return ret
+
+def load_ltwh_bboxes():
+    pass
+
+
+
+
 
 
 if __name__ == "__main__":
@@ -216,7 +209,10 @@ if __name__ == "__main__":
     assert osp.isfile(VIDEO_NAME)
 
     device = select_device(args.device, batch_size=1)
-    print('Using device: {}'.format(device))
+    print("Using device: {}".format(device))
+
+    # deepsort 
+    sorted_mot = get_sorted_bbox()
 
     model = attempt_load(args.weights, map_location=device)  # load FP32 model
     half = args.half & (device.type != 'cpu')
@@ -228,9 +224,6 @@ if __name__ == "__main__":
     # dataset = LoadImages('./{}'.format(VIDEO_NAME), img_size=imgsz, stride=stride, auto=True)
     dataset = LoadImages('{}'.format(VIDEO_NAME), img_size=imgsz, stride=stride, auto=True)
 
-    if device.type != 'cpu':
-        model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
-
     cap = dataset.cap
     cap.set(cv2.CAP_PROP_POS_MSEC, args.start * 1000)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -238,90 +231,83 @@ if __name__ == "__main__":
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     gif_frames = []
-    video_name = 'pingpong_inference_{}_{}'.format(osp.splitext(args.weights)[0],VIDEO_NAME.split('/')[-1].split(".")[0])
+    video_name = 'pingpong_inference_deepsort_{}_{}'.format(osp.splitext(args.weights)[0],VIDEO_NAME.split('/')[-1].split(".")[0])
+
+    if device.type != 'cpu':
+        model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
 
     if not args.display:
-        writer = cv2.VideoWriter(args.output_dir + video_name + '.mp4',
-                                 cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
+        writer = cv2.VideoWriter(args.output_dir+video_name + '.mp4',cv2.VideoWriter_fourcc(*'mp4v'), fps, (w, h))
         if not args.fps:  # tqdm might slows down inference
-            dataset = tqdm(dataset, desc='Writing inference video', total=n)
+            progress_dataset = (dataset)
 
-    # bboxを取得
+    ###########
+    # 描画するところ #
+    ###########
+
+    tldr_sort_bboxes:list = convert_ltwh2tldr(sorted_mot.to_numpy())
+    mot_poses = load_poses()
+    # ltwh_bboxes = load_ltwh_bboxes()
+    # tldr_bboxes = convert_ltwh2tldr(ltwh_bboxes)
+
+    dataset = tqdm(dataset,total=n)
     t0 = time_sync()
 
-    output_bboxes = []
-    output_fused = []
-    output_scores = []
-    output_poses = []
-
-    for i, (path, img, im0,_) in enumerate(dataset):
+    for frame_id , (path,img,im0,_) in enumerate(dataset,start=1):
         img = torch.from_numpy(img).to(device)
-        img = img.half() if half else img.float()  # uint8 to fp16/32
-        img = img / 255.0  # 0 - 255 to 0.0 - 1.0
+        img = img.half()
+        img /= 255.0
         if len(img.shape) == 3:
-            img = img[None]  # expand for batch dim
-
-        out = model(img, augment=True, kp_flip=data['kp_flip'], scales=data['scales'], flips=data['flips'])[0]
-        person_dets, kp_dets = run_nms(data, out)
-        bboxes, poses, scores, ids, fused = post_process_batch(data, img, [], [[im0.shape[:2]]], person_dets, kp_dets)
-
-        bboxes = np.array(bboxes)
-        poses = np.array(poses)
-        scores = np.array(scores)
-        fused = np.array(fused)
+            img = img[None]
         
-       
-        output_bboxes.append(bboxes)
-        output_scores.append(scores)
-        output_fused.append(fused)
-        output_poses.append(poses)
-
-
         im0_copy = im0.copy()
-        # DRAW POSES
-        for j, (bbox, pose) in enumerate(zip(bboxes, poses)):
-            x1, y1, x2, y2 = bbox
-            size = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-            # if size < 450:
-            cv2.rectangle(im0_copy, (int(x1), int(y1)), (int(x2), int(y2)), COLOR, thickness=2)
-            for seg in data['segments'].values():
-                pt1 = (int(pose[seg[0], 0]), int(pose[seg[0], 1]))
-                pt2 = (int(pose[seg[1], 0]), int(pose[seg[1], 1]))
-                cv2.line(im0_copy, pt1, pt2, COLOR, SEG_THICK)
-        im0 = cv2.addWeighted(im0, ALPHA, im0_copy, 1 - ALPHA, gamma=0)
+        
+        # 対象のフレームとして切り出した
+        mask_poses = get_masked_data(mot_poses,frame_id)
+        mask_bboxes = get_masked_data(tldr_bboxes,frame_id)
+        mask_sort_bboxes = get_masked_data(tldr_sort_bboxes, frame_id)
+        
+        # kapaoの方
+        for _poses, _bboxes in zip(mask_poses,mask_bboxes):
+            x1,y1,x2,y2 = _bboxes[2:6]
+            cv2.rectangle(im0_copy,(int(x1),int(y1)),(int(x2),int(y2)),GRAY, thickness=2)
+        im0 = cv2.addWeighted(im0, CROWD_ALPHA, im0_copy, 1 - CROWD_ALPHA, gamma=0)
 
-        if i == 0:
+        
+        im0_copy = im0.copy()
+        for _sort_bbox in mask_sort_bboxes:
+            x1,y1,x2,y2 = _sort_bbox[2:6]
+            cv2.rectangle(im0_copy,(int(x1),int(y1)),(int(x2),int(y2)),RED, thickness=2)
+        im0 = cv2.addWeighted(im0, CROWD_ALPHA, im0_copy, 1 - CROWD_ALPHA, gamma=0)
+#     im0 = cv2.addWeighted(im0, PLAYER_ALPHA_BOX, im0_copy, 1 - PLAYER_ALPHA_BOX, gamma=0)
+            
+        
+        
+        if frame_id == 1:
             t = time_sync() - t0
         else:
             t = time_sync() - t1
-
-        if args.fps:
-            s = FPS_TEXT_SIZE
-            cv2.putText(im0, '{:.1f} FPS'.format(1 / t), (5*s, 25*s),
-                        cv2.FONT_HERSHEY_SIMPLEX, s, (255, 255, 255), thickness=2*s)
-
         if args.gif:
-            gif_frames.append(cv2.resize(im0, dsize=None, fx=0.375, fy=0.375)[:, :, [2, 1, 0]])
+            gif_frames.append(cv2.resize(im0, dsize=None, fx=0.25, fy=0.25)[:, :, [2, 1, 0]])
         elif not args.display:
             writer.write(im0)
         else:
-            cv2.imshow('', im0)
+            cv2.imshow('', cv2.resize(im0, dsize=None, fx=0.5, fy=0.5))
             cv2.waitKey(1)
 
         t1 = time_sync()
-
-        if i == n-1:
+        if frame_id == n :
             break
+
+
         
-    print('end')
-
-
-    ltwh_bboxes = convert_tldr2ltwh(output_bboxes,output_scores)
-    npy = np.array(ltwh_bboxes)
-    np.save(f'{args.output_dir}/detection_{VIDEO_NAME.split("/")[-1].split(".")[0]}.npy',npy)
-    mot_poses  = convert_poses_MOTformat(output_poses)
-    with open(f'{args.output_dir}/detection_poses_{VIDEO_NAME.split("/")[-1].split(".")[0]}.pkl','wb') as f:
-        pickle.dump(mot_poses,f)
-
-
+    cv2.destroyAllWindows()
+    cap.release()
+    if not args.display:
+        writer.release()
+    if args.gif:
+        print('Saving GIF...')
+        with imageio.get_writer(video_name + '.gif', mode="I", fps=fps) as writer:
+            for idx, frame in tqdm(enumerate(gif_frames)):
+                writer.append_data(frame)
 
