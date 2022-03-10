@@ -189,6 +189,7 @@ if __name__ == "__main__":
         output_scores.append(scores)
         output_fused.append(fused)
 
+
         im0_copy = im0.copy()
         # DRAW POSES
         for j, (bbox, pose) in enumerate(zip(bboxes, poses)):
