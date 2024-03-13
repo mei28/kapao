@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  core:
+    image: gbm_cpu:latest
+    container_name: gbm_cpu
+    build:
+      args:
+        - BASE_IMAGE=ubuntu:22.04
+        - PYTHON_VERSION=3.10
+        - UID=${HOST_UID-1000}
+        - GID=${HOST_GID-1000}
+      context: ../../
+      dockerfile: environments/Dockerfile
+    tty: true
+    volumes:
+        - ../../:/home/docker/ml
+    ports:
+        - 9096:9096
+    shm_size: 32G
+  nvimei:
+    image: mei28/nvimei:base
+    volumes:
+      - ../../:/home/docker/ml
